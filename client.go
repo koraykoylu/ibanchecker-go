@@ -5,12 +5,26 @@
 // extract IBANs from free text, look up country format specifications and
 // resolve SWIFT/BIC codes.
 //
-// Validate, ValidateBulk and Extract need an API key; without one the API
-// answers HTTP 401, returned as ErrAuthentication. A free key covers 100
-// requests a month and arrives by email in seconds; request it at
-// https://ibanchecker.cash/api-docs, and see https://ibanchecker.cash/pricing
-// for paid plans. CountryFormat and LookupBIC work without a key, limited to
-// 100 requests an hour per IP.
+// Every method except CountryFormat needs an API key, LookupBIC included;
+// without one the API answers HTTP 401, returned as ErrAuthentication. A free
+// key covers 100 requests a month and arrives by email in seconds; request it
+// at https://ibanchecker.cash/api-docs, and see https://ibanchecker.cash/pricing
+// for paid plans.
+//
+// What a key can call follows its plan. A free key covers Validate only;
+// ValidateBulk and LookupBIC need the Basic plan or above (Basic, Starter,
+// Growth, Enterprise), and Extract the Growth plan or above (Growth,
+// Enterprise). A key whose email address has a verified account at
+// https://ibanchecker.cash/dashboard can try the methods its plan lacks:
+// ValidateBulk with up to 10 IBANs per call, LookupBIC, and Extract with up to
+// 5,000 characters per call. Outside the trial, a call the key's plan does not
+// include gets HTTP 403 with the code "PLAN_REQUIRED"; this client has no
+// sentinel for 403, so the *Error unwraps to ErrAPI.
+//
+// Validate and LookupBIC count one request against the monthly quota,
+// ValidateBulk one per IBAN in the call, and Extract one per IBAN found (at
+// least one per call). CountryFormat works without a key, limited to 100
+// requests an hour per IP.
 //
 //	client := ibanchecker.New(os.Getenv("IBANCHECKER_API_KEY"))
 //
@@ -24,7 +38,7 @@
 //
 // A malformed IBAN is not an error: Validate returns a ValidationResult with
 // Valid false and an Error plus ErrorCode explaining why. Errors are returned
-// for transport, authentication, quota and server-side problems only.
+// for transport, authentication, plan, quota and server-side problems only.
 package ibanchecker
 
 import (
@@ -40,7 +54,7 @@ import (
 )
 
 // Version goes out in the User-Agent header.
-const Version = "0.1.1"
+const Version = "0.1.2"
 
 // DefaultBaseURL is the production API.
 const DefaultBaseURL = "https://ibanchecker.cash/api/v1"
@@ -75,9 +89,9 @@ func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.httpClient.Timeout = d }
 }
 
-// New returns a Client. Validate, ValidateBulk and Extract need an API key.
-// An empty apiKey is accepted, but then only CountryFormat and LookupBIC
-// succeed, limited to 100 requests an hour per IP.
+// New returns a Client. Every method except CountryFormat needs an API key.
+// An empty apiKey is accepted, but then only CountryFormat succeeds, limited
+// to 100 requests an hour per IP.
 func New(apiKey string, opts ...Option) *Client {
 	c := &Client{
 		apiKey:  apiKey,
@@ -104,7 +118,8 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("refusing to follow the redirect to %s: set the base URL to that address (the API is https, and an http base URL redirects)", req.URL)
 }
 
-// Validate validates a single IBAN.
+// Validate validates a single IBAN. Any key can call it, the free one
+// included, and each call counts one request.
 //
 // A malformed IBAN is not an error: the result comes back with Valid false and
 // an Error plus ErrorCode explaining why.
@@ -119,6 +134,10 @@ func (c *Client) Validate(ctx context.Context, iban string) (*ValidationResult, 
 
 // ValidateBulk validates up to 100 IBANs in one request. Results come back in
 // the same order as the input.
+//
+// It needs a key on the Basic plan or above; a key with a verified account can
+// try it with up to 10 IBANs per call, and over that the API answers HTTP 400
+// with the code "TOO_MANY_IBANS". Each IBAN in the call counts one request.
 func (c *Client) ValidateBulk(ctx context.Context, ibans []string) (*BatchResult, error) {
 	if ibans == nil {
 		ibans = []string{}
@@ -133,6 +152,11 @@ func (c *Client) ValidateBulk(ctx context.Context, ibans []string) (*BatchResult
 
 // Extract scans free text (emails, invoices) for IBAN-shaped strings and
 // validates each candidate. Up to 50,000 characters per request.
+//
+// It needs a key on the Growth plan or above; a key with a verified account can
+// try it with up to 5,000 characters per call, and over that the API answers
+// HTTP 400 with the code "TEXT_TOO_LONG". Each IBAN found counts one request,
+// and a call counts at least one.
 func (c *Client) Extract(ctx context.Context, text string) (*BatchResult, error) {
 	var out BatchResult
 	err := c.request(ctx, http.MethodPost, "/extract", map[string]any{"text": text}, &out)
@@ -144,6 +168,10 @@ func (c *Client) Extract(ctx context.Context, text string) (*BatchResult, error)
 
 // CountryFormat returns the IBAN format specification for an ISO 3166-1
 // alpha-2 country code, for example "DE".
+//
+// It is the only method that works without a key, limited to 100 requests an
+// hour per IP; beyond that the API answers HTTP 429 with the code
+// "RATE_LIMIT_EXCEEDED", returned as ErrRateLimit.
 func (c *Client) CountryFormat(ctx context.Context, country string) (*FormatSpec, error) {
 	var out FormatSpec
 	path := "/formats/" + url.PathEscape(strings.ToLower(country))
@@ -155,6 +183,12 @@ func (c *Client) CountryFormat(ctx context.Context, country string) (*FormatSpec
 }
 
 // LookupBIC resolves an 8 or 11 character ISO 9362 BIC to a bank record.
+//
+// It needs an API key: without one the API answers HTTP 401, returned as
+// ErrAuthentication. The key needs the Basic plan or above, or a verified
+// account for the trial; otherwise the API answers HTTP 403 with the code
+// "PLAN_REQUIRED", returned as an *Error that unwraps to ErrAPI. Each call
+// counts one request.
 func (c *Client) LookupBIC(ctx context.Context, bic string) (*BankRecord, error) {
 	var out BankRecord
 	path := "/swift/" + url.PathEscape(strings.ToUpper(bic))

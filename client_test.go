@@ -320,6 +320,7 @@ func TestErrorStatusesMapToSentinels(t *testing.T) {
 	cases := map[int]error{
 		400: ErrBadRequest,
 		401: ErrAuthentication,
+		403: ErrAPI,
 		404: ErrNotFound,
 		429: ErrRateLimit,
 		500: ErrAPI,
