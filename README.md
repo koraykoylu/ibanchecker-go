@@ -23,12 +23,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	ibanchecker "github.com/koraykoylu/ibanchecker-go"
 )
 
 func main() {
-	client := ibanchecker.New("") // no API key needed for light use (100 requests/hour per IP)
+	// Validation, bulk validation and extraction need an API key.
+	client := ibanchecker.New(os.Getenv("IBANCHECKER_API_KEY"))
 
 	result, err := client.Validate(context.Background(), "DE89 3704 0044 0532 0130 00")
 	if err != nil {
@@ -50,22 +52,28 @@ Every method takes a `context.Context` as its first argument, so a caller's dead
 
 ## Authentication
 
-An API key is optional. Without one, requests are limited to 100 per hour per IP. With a key, requests count against your plan quota. Get a free key at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs).
+`Validate`, `ValidateBulk` and `Extract` need an API key. Without one the API answers HTTP 401 and the client returns `ErrAuthentication`. A free key covers 100 requests a month and arrives by email in seconds: request it at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs). Paid plans are at [ibanchecker.cash/pricing](https://ibanchecker.cash/pricing).
+
+`CountryFormat` and `LookupBIC` work without a key, limited to 100 requests an hour per IP.
 
 ```go
-client := ibanchecker.New("iban_your_api_key")
+client := ibanchecker.New("YOUR_API_KEY")
 client := ibanchecker.New(os.Getenv("IBANCHECKER_API_KEY"))
+
+lookups := ibanchecker.New("") // CountryFormat and LookupBIC only
 ```
+
+The key is sent as `Authorization: Bearer <key>`. Requests made with it count against its monthly quota; once that is used up the API answers HTTP 429 with the code `QUOTA_EXCEEDED` until the 1st of the next month (UTC).
 
 ## Methods
 
-| Method | Description |
-| --- | --- |
-| `Validate(ctx, iban)` | Validate a single IBAN. Returns a `*ValidationResult`. |
-| `ValidateBulk(ctx, ibans)` | Validate up to 100 IBANs. Returns a `*BatchResult`. |
-| `Extract(ctx, text)` | Find and validate IBANs in free text (up to 50,000 chars). Returns a `*BatchResult`. |
-| `CountryFormat(ctx, country)` | IBAN format spec for an ISO country code. Returns a `*FormatSpec`. |
-| `LookupBIC(ctx, bic)` | Resolve an 8 or 11 character BIC. Returns a `*BankRecord`. |
+| Method | API key | Description |
+| --- | --- | --- |
+| `Validate(ctx, iban)` | required | Validate a single IBAN. Returns a `*ValidationResult`. |
+| `ValidateBulk(ctx, ibans)` | required | Validate up to 100 IBANs. Returns a `*BatchResult`. |
+| `Extract(ctx, text)` | required | Find and validate IBANs in free text (up to 50,000 chars). Returns a `*BatchResult`. |
+| `CountryFormat(ctx, country)` | optional | IBAN format spec for an ISO country code. Returns a `*FormatSpec`. |
+| `LookupBIC(ctx, bic)` | optional | Resolve an 8 or 11 character BIC. Returns a `*BankRecord`. |
 
 ### Bulk validation
 
@@ -96,6 +104,8 @@ for _, r := range batch.Results {
 ```
 
 ### Country format and BIC lookup
+
+These two work without a key, limited to 100 requests an hour per IP.
 
 ```go
 spec, err := client.CountryFormat(ctx, "DE")
@@ -134,9 +144,9 @@ switch {
 case errors.Is(err, ibanchecker.ErrNotFound):
 	fmt.Println("No bank for that BIC")
 case errors.Is(err, ibanchecker.ErrRateLimit):
-	fmt.Println("Slow down")
+	fmt.Println("Slow down, or the monthly quota is used up")
 case errors.Is(err, ibanchecker.ErrAuthentication):
-	fmt.Println("Check your API key")
+	fmt.Println("Missing or invalid API key")
 }
 
 var apiErr *ibanchecker.Error
@@ -145,21 +155,23 @@ if errors.As(err, &apiErr) {
 }
 ```
 
+A `QUOTA_EXCEEDED` error also carries `upgrade_url` in `apiErr.Response`.
+
 | Sentinel | Returned when |
 | --- | --- |
 | `ErrBadRequest` | HTTP 400, the request was malformed |
-| `ErrAuthentication` | HTTP 401, the API key is missing, invalid or inactive |
+| `ErrAuthentication` | HTTP 401, the API key is missing (validation, bulk validation and extraction need one), invalid or inactive |
 | `ErrNotFound` | HTTP 404, no such country code or BIC |
-| `ErrRateLimit` | HTTP 429, hourly limit or monthly quota exceeded |
+| `ErrRateLimit` | HTTP 429, the key's monthly quota is used up (`QUOTA_EXCEEDED`), or a lookup without a key went over 100 an hour (`RATE_LIMIT_EXCEEDED`) |
 | `ErrAPI` | any other error status, or a body that could not be read |
 | `ErrTransport` | the request never reached the API: DNS, TLS, connection, timeout |
 
 ## Timeouts and your own HTTP stack
 
 ```go
-client := ibanchecker.New("", ibanchecker.WithTimeout(3*time.Second))
+client := ibanchecker.New(apiKey, ibanchecker.WithTimeout(3*time.Second))
 
-client := ibanchecker.New("", ibanchecker.WithHTTPClient(myClient))
+client := ibanchecker.New(apiKey, ibanchecker.WithHTTPClient(myClient))
 ```
 
 `WithHTTPClient` replaces the whole client, so the timeout and the redirect policy below come from yours.

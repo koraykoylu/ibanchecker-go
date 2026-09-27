@@ -5,10 +5,14 @@
 // extract IBANs from free text, look up country format specifications and
 // resolve SWIFT/BIC codes.
 //
-// An API key is optional. Without one, requests are limited to 100 per hour
-// per IP. Get a free key at https://ibanchecker.cash/api-docs.
+// Validate, ValidateBulk and Extract need an API key; without one the API
+// answers HTTP 401, returned as ErrAuthentication. A free key covers 100
+// requests a month and arrives by email in seconds; request it at
+// https://ibanchecker.cash/api-docs, and see https://ibanchecker.cash/pricing
+// for paid plans. CountryFormat and LookupBIC work without a key, limited to
+// 100 requests an hour per IP.
 //
-//	client := ibanchecker.New("") // or ibanchecker.New("iban_your_key")
+//	client := ibanchecker.New(os.Getenv("IBANCHECKER_API_KEY"))
 //
 //	result, err := client.Validate(context.Background(), "DE89 3704 0044 0532 0130 00")
 //	if err != nil {
@@ -36,7 +40,7 @@ import (
 )
 
 // Version goes out in the User-Agent header.
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 // DefaultBaseURL is the production API.
 const DefaultBaseURL = "https://ibanchecker.cash/api/v1"
@@ -71,7 +75,9 @@ func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.httpClient.Timeout = d }
 }
 
-// New returns a Client. Pass an empty apiKey for unauthenticated use.
+// New returns a Client. Validate, ValidateBulk and Extract need an API key.
+// An empty apiKey is accepted, but then only CountryFormat and LookupBIC
+// succeed, limited to 100 requests an hour per IP.
 func New(apiKey string, opts ...Option) *Client {
 	c := &Client{
 		apiKey:  apiKey,

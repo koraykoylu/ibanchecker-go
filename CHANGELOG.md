@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+Documentation only; the client behaves as before, apart from the version in
+its User-Agent header.
+
+- `Validate`, `ValidateBulk` and `Extract` now need an API key: the API
+  answers HTTP 401 without one, returned as `ErrAuthentication`
+- The free key covers 100 requests a month; over the quota the API answers
+  HTTP 429 with the code `QUOTA_EXCEEDED`, returned as `ErrRateLimit`
+- `CountryFormat` and `LookupBIC` still work without a key, limited to 100
+  requests an hour per IP
+- README, godoc and the quick start construct the client with a key
+
 ## 0.1.0
 
 First release.

@@ -13,14 +13,15 @@ var (
 	ErrBadRequest = errors.New("bad request")
 
 	// ErrAuthentication is returned for HTTP 401: the API key is missing,
-	// invalid or inactive.
+	// invalid or inactive. Validate, ValidateBulk and Extract need a key.
 	ErrAuthentication = errors.New("authentication failed")
 
 	// ErrNotFound is returned for HTTP 404: no such country code or BIC.
 	ErrNotFound = errors.New("not found")
 
-	// ErrRateLimit is returned for HTTP 429: the hourly rate limit or the
-	// monthly quota was exceeded.
+	// ErrRateLimit is returned for HTTP 429: the key's monthly quota was
+	// used up (Code "QUOTA_EXCEEDED"), or a lookup without a key went over
+	// 100 requests an hour per IP (Code "RATE_LIMIT_EXCEEDED").
 	ErrRateLimit = errors.New("rate limited")
 
 	// ErrAPI is returned for any other error status, and for a response body
